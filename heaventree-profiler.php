@@ -4,7 +4,7 @@
  * Plugin URI:  https://heaventree.ie
  * Description: Identifies which WordPress plugins slow down your site. Includes WooCommerce-specific profiling and AI-powered recommendations. PHP 8.2 & WP 6.x compatible.
  * Author:      Heaventree
- * Version:     2.0.0
+ * Version:     2.0.1
  * Requires at least: 6.0
  * Requires PHP: 8.0
  * Text Domain: heaventree-profiler
@@ -15,7 +15,7 @@ declare(strict_types=1);
 
 if (!defined('ABSPATH')) exit;
 
-define('HTP_VERSION', '2.0.0');
+define('HTP_VERSION', '2.0.1');
 define('HTP_PATH',    plugin_dir_path(__FILE__));
 define('HTP_URL',     plugin_dir_url(__FILE__));
 define('HTP_SLUG',    'heaventree-profiler');
