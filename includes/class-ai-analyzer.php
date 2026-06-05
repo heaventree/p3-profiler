@@ -37,13 +37,14 @@ class HTP_AI_Analyzer {
     }
 
     private function build_prompt(array $p): string {
-        $db  = $p['db']  ?? [];
-        $woo = $p['woo'] ?? null;
+        $db    = $p['db']    ?? [];
+        $woo   = $p['woo']   ?? null;
+        $admin = $p['admin'] ?? null;
 
         $plugins_line = implode(', ', $p['active_plugins'] ?? []);
 
-        $top_hooks    = array_slice($p['plugin_hooks'] ?? [], 0, 10, true);
-        $hooks_text   = implode("\n", array_map(
+        $top_hooks  = array_slice($p['plugin_hooks'] ?? [], 0, 10, true);
+        $hooks_text = implode("\n", array_map(
             static fn ($slug, $count) => "  {$slug}: {$count} registered callbacks",
             array_keys($top_hooks), $top_hooks
         ));
@@ -66,7 +67,49 @@ class HTP_AI_Analyzer {
                 array_keys($woo['hook_timings'] ?? []),
                 $woo['hook_timings'] ?? []
             ));
-            $woo_section = "\n\n## WooCommerce {$woo['wc_version']}\n- WC-related queries: {$woo['wc_queries']} totalling {$woo['wc_query_ms']}ms\n- Hook timings:\n{$woo_hooks}";
+            $hpos = $woo['hpos_enabled'] ? 'yes (HPOS custom tables)' : 'no (legacy post meta)';
+            $woo_section = "\n\n## WooCommerce {$woo['wc_version']}\n" .
+                "- HPOS order storage: {$hpos}\n" .
+                "- WC-related queries: {$woo['wc_queries']} totalling {$woo['wc_query_ms']}ms\n" .
+                "- Hook timings:\n{$woo_hooks}";
+        }
+
+        $admin_section = '';
+        if ($admin) {
+            $screen_str = '';
+            if ($admin['screen']) {
+                $s = $admin['screen'];
+                $screen_str = "\n- Admin screen: {$s['id']} (base: {$s['base']}, post_type: {$s['post_type']})";
+            }
+
+            $hook_total_lines = implode("\n", array_map(
+                static fn ($k, $v) => "  {$k}: {$v}ms",
+                array_keys($admin['hook_totals'] ?? []),
+                $admin['hook_totals'] ?? []
+            ));
+
+            // Per-plugin attribution: most important data for AI
+            $plugin_timing_lines = '';
+            foreach ($admin['plugin_timings'] ?? [] as $hook => $plugins) {
+                $plugin_timing_lines .= "  {$hook}:\n";
+                foreach ($plugins as $slug => $ms) {
+                    $plugin_timing_lines .= "    {$slug}: {$ms}ms\n";
+                }
+            }
+
+            $pending = implode(', ', $admin['pending_checks'] ?? []);
+            $pending_warn = $pending ? "\n- SLOW REQUEST WARNING: stale update-check transients for [{$pending}] — WordPress will make blocking HTTP calls on the next admin load" : '';
+
+            $enqueued_lines = implode("\n", array_map(
+                static fn ($slug, $count) => "  {$slug}: {$count} assets",
+                array_keys(array_slice($admin['enqueued'] ?? [], 0, 10, true)),
+                array_slice($admin['enqueued'] ?? [], 0, 10)
+            ));
+
+            $admin_section = "\n\n## WordPress Admin Profiling{$screen_str}{$pending_warn}\n" .
+                "### Hook totals\n{$hook_total_lines}\n" .
+                "### Per-plugin time attribution\n{$plugin_timing_lines}" .
+                "### Enqueued assets by plugin\n{$enqueued_lines}";
         }
 
         return <<<PROMPT
@@ -86,17 +129,19 @@ You are a WordPress performance expert. Analyse the profiling data below and pro
 
 ## Database
 - Total queries: {$db['total']} in {$db['total_ms']}ms
-- Slow queries (>{$db['slow_threshold_ms']}ms):\n{$queries_text}{$woo_section}
+- Slow queries (>{$db['slow_threshold_ms']}ms):
+{$queries_text}{$woo_section}{$admin_section}
 
-## Plugin Hook Registrations (highest = most hooks, proxy for overhead)
+## Plugin Hook Registrations (highest = most hooks registered)
 {$hooks_text}
 
 ## Instructions
 Provide:
-1. Top 3-5 specific performance problems identifiable from this data
-2. Concrete fix for each (plugin to configure/deactivate, WP/WC setting to change)
-3. Separate "Quick wins" from "Bigger changes"
-4. WC-specific recommendations if WooCommerce data is present
+1. Top 3-5 specific performance problems identifiable from this data, citing actual plugin names and ms values
+2. A concrete fix for each (plugin config change, wp-admin setting, code snippet, or removal recommendation)
+3. Separate "Quick wins" (under 10 min) from "Bigger changes"
+4. If this is an admin page, focus on admin_init and admin_menu slowness and update-check blocking
+5. If WooCommerce data is present, include WC-specific recommendations (HPOS, transient caching, query optimisation)
 
 Be direct. Name actual plugin slugs and wp-admin settings paths.
 PROMPT;

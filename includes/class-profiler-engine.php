@@ -6,7 +6,7 @@ if (!defined('ABSPATH')) exit;
 /**
  * Core profiling engine.
  * Collects wall-clock checkpoints at key WP lifecycle events,
- * static plugin callback counts, and coordinates DB/WC profilers.
+ * static plugin callback counts, and coordinates DB/WC/admin profilers.
  */
 class HTP_Profiler_Engine {
 
@@ -35,10 +35,15 @@ class HTP_Profiler_Engine {
         $this->running    = true;
         $this->start_time = (float)($_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true));
         $this->mark('profiler_ready');
-        add_action('init',       fn () => $this->mark('init'),       PHP_INT_MAX);
-        add_action('wp_loaded',  fn () => $this->mark('wp_loaded'),  PHP_INT_MAX);
-        add_action('admin_init', fn () => $this->mark('admin_init'), PHP_INT_MAX);
-        add_action('wp',         fn () => $this->mark('wp'),         PHP_INT_MAX);
+
+        add_action('init',           fn () => $this->mark('init'),           PHP_INT_MAX);
+        add_action('wp_loaded',      fn () => $this->mark('wp_loaded'),      PHP_INT_MAX);
+        add_action('admin_init',     fn () => $this->mark('admin_init'),     PHP_INT_MAX);
+        add_action('admin_menu',     fn () => $this->mark('admin_menu'),     PHP_INT_MAX);
+        add_action('current_screen', fn () => $this->mark('current_screen'), PHP_INT_MAX);
+        add_action('admin_head',     fn () => $this->mark('admin_head'),     PHP_INT_MAX);
+        add_action('wp',             fn () => $this->mark('wp'),             PHP_INT_MAX);
+
         register_shutdown_function([$this, 'shutdown']);
     }
 
@@ -51,10 +56,12 @@ class HTP_Profiler_Engine {
         $this->running = false;
         $this->mark('total');
 
+        $is_admin = is_admin();
+
         $profile = [
             'date'           => gmdate('c'),
             'url'            => sanitize_url($_SERVER['REQUEST_URI'] ?? ''),
-            'is_admin'       => is_admin(),
+            'is_admin'       => $is_admin,
             'total_ms'       => $this->checkpoints['total'],
             'memory_mb'      => round(memory_get_peak_usage(true) / 1_048_576, 1),
             'wp_version'     => get_bloginfo('version'),
@@ -65,8 +72,9 @@ class HTP_Profiler_Engine {
                 static fn (string $p) => basename(dirname($p)) ?: basename($p),
                 (array) get_option('active_plugins', [])
             ),
-            'db'  => HTP_DB_Profiler::get_instance()->get_results(),
-            'woo' => class_exists('WooCommerce') ? HTP_Woo_Profiler::get_instance()->get_results() : null,
+            'db'    => HTP_DB_Profiler::get_instance()->get_results(),
+            'woo'   => class_exists('WooCommerce') ? HTP_Woo_Profiler::get_instance()->get_results() : null,
+            'admin' => $is_admin ? HTP_Admin_Page_Profiler::get_instance()->get_results() : null,
         ];
 
         $opts = get_option('htp_options', []);

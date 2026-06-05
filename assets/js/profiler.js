@@ -4,29 +4,44 @@
 (function () {
   'use strict';
 
-  const { nonce, ajax, profiling, ip, opts, site_url, admin_url, woo_active } = window.HTP_Data || {};
+  var HTP = window.HTP_Data || {};
+  var nonce = HTP.nonce, ajax = HTP.ajax, profiling = HTP.profiling,
+      ip = HTP.ip, opts = HTP.opts, site_url = HTP.site_url,
+      admin_url = HTP.admin_url, woo_active = HTP.woo_active;
 
   // ------------------------------------------------------------------ utils
-  function el(tag, attrs, ...children) {
+  function el(tag, attrs) {
     attrs = attrs || {};
-    const node = document.createElement(tag);
-    Object.entries(attrs).forEach(([k, v]) => {
+    var node = document.createElement(tag);
+    var children = Array.prototype.slice.call(arguments, 2);
+    Object.keys(attrs).forEach(function (k) {
+      var v = attrs[k];
       if (k === 'cls') node.className = v;
-      else if (k === 'on') Object.entries(v).forEach(([ev, fn]) => node.addEventListener(ev, fn));
+      else if (k === 'on') Object.keys(v).forEach(function (ev) { node.addEventListener(ev, v[ev]); });
       else if (k === 'innerHTML') node.innerHTML = v;
       else node.setAttribute(k, v);
     });
-    children.flat(Infinity).filter(function (c) { return c != null && c !== false && c !== ''; })
-      .forEach(function (c) { node.append(c); });
+    flatten(children).forEach(function (c) {
+      if (c != null && c !== false && c !== '') node.append(c);
+    });
     return node;
+  }
+
+  function flatten(arr) {
+    var out = [];
+    (arr || []).forEach(function (item) {
+      if (Array.isArray(item)) flatten(item).forEach(function (x) { out.push(x); });
+      else out.push(item);
+    });
+    return out;
   }
 
   function post(action, data) {
     data = data || {};
-    const fd = new FormData();
+    var fd = new FormData();
     fd.append('action', action);
     fd.append('nonce', nonce);
-    Object.entries(data).forEach(([k, v]) => fd.append(k, v));
+    Object.keys(data).forEach(function (k) { fd.append(k, data[k]); });
     return fetch(ajax, { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })
       .then(function (r) {
@@ -37,19 +52,20 @@
 
   function fmtMs(ms) {
     if (ms == null) return '—';
-    return ms >= 1000 ? (ms / 1000).toFixed(2) + 's' : Number(ms).toFixed(1) + 'ms';
+    ms = Number(ms);
+    return ms >= 1000 ? (ms / 1000).toFixed(2) + 's' : ms.toFixed(1) + 'ms';
   }
 
   function speedCls(ms) {
+    ms = Number(ms);
     if (ms < 500)  return 'htp-good';
     if (ms < 1500) return 'htp-warn';
     return 'htp-bad';
   }
 
   function bar(pct, cls) {
-    cls = cls || '';
     return el('div', { cls: 'htp-bar-wrap' },
-      el('div', { cls: 'htp-bar-fill ' + cls, style: 'width:' + Math.min(pct, 100) + '%' })
+      el('div', { cls: 'htp-bar-fill ' + (cls || ''), style: 'width:' + Math.min(pct, 100) + '%' })
     );
   }
 
@@ -66,6 +82,13 @@
       .replace(/\n{2,}/g, '</p><p>');
   }
 
+  function tile(label, value) {
+    return el('div', { cls: 'htp-metric' },
+      el('span', { cls: 'htp-metric-val' }, String(value != null ? value : '—')),
+      el('span', { cls: 'htp-metric-label' }, label)
+    );
+  }
+
   // ------------------------------------------------------------------ state
   var state = {
     tab: 'dashboard',
@@ -76,7 +99,7 @@
     isProfilingNow: !!profiling,
     profilingIp: ip || '',
     scanName: '',
-    settings: Object.assign({}, opts),
+    settings: JSON.parse(JSON.stringify(opts || {})),
     loading: false,
     aiLoading: false,
   };
@@ -123,12 +146,13 @@
     var card    = el('div', { cls: 'htp-card' });
 
     if (state.isProfilingNow) {
-      var stored = (window.HTP_Data && window.HTP_Data.opts) || {};
-      var exp    = stored.profiling_expires ? new Date(stored.profiling_expires * 1000).toLocaleTimeString() : '';
+      var stored = (HTP && HTP.opts) || {};
+      var exp = stored.profiling_expires
+        ? new Date(stored.profiling_expires * 1000).toLocaleTimeString() : '';
       card.append(
         el('p', { cls: 'htp-status-text htp-good' }, 'Profiling active for IP: ' + (stored.profiling_ip || ip || '')),
         exp ? el('p', { cls: 'htp-hint' }, 'Auto-stops at ' + exp) : null,
-        el('p', { cls: 'htp-hint' }, 'Browse your site or wp-admin now. Results are saved automatically after each page load.'),
+        el('p', { cls: 'htp-hint' }, 'Browse your site or wp-admin now. Results are saved after each page load.'),
         el('div', { cls: 'htp-row htp-mt' },
           el('a', { href: site_url, target: '_blank', cls: 'htp-btn htp-btn--ghost' }, '↗ Visit site'),
           el('a', { href: admin_url, target: '_blank', cls: 'htp-btn htp-btn--ghost' }, '↗ wp-admin'),
@@ -161,9 +185,18 @@
     if (woo_active) {
       section.append(el('div', { cls: 'htp-card htp-card--info' },
         el('strong', {}, 'WooCommerce detected'),
-        el('p', { cls: 'htp-hint' }, 'WC hook timing and query attribution are enabled. For best results, profile /wp-admin/edit.php?post_type=shop_order and /wp-admin/admin.php?page=wc-reports')
+        el('p', { cls: 'htp-hint' }, 'For best results profile: wp-admin/edit.php?post_type=shop_order and wp-admin/edit.php?post_type=product')
       ));
     }
+
+    section.append(el('div', { cls: 'htp-card htp-card--info' },
+      el('strong', {}, 'Admin profiling tips'),
+      el('ul', { cls: 'htp-hint' },
+        el('li', {}, 'Profile wp-admin/index.php (Dashboard) to catch update-check blocking and dashboard widget overhead'),
+        el('li', {}, 'Profile wp-admin/edit.php to see admin_menu and admin_init culprits'),
+        el('li', {}, 'Profile wp-admin/options-general.php for settings-page plugin overhead')
+      )
+    ));
 
     return section;
   }
@@ -172,9 +205,9 @@
     post('htp_start_scan', { scan_name: state.scanName, ip: state.profilingIp, duration: 3600 })
       .then(function (data) {
         state.isProfilingNow = true;
-        if (window.HTP_Data && window.HTP_Data.opts) {
-          window.HTP_Data.opts.profiling_ip      = data.ip;
-          window.HTP_Data.opts.profiling_expires = data.expires;
+        if (HTP && HTP.opts) {
+          HTP.opts.profiling_ip      = data.ip;
+          HTP.opts.profiling_expires = data.expires;
         }
         render();
       })
@@ -208,10 +241,7 @@
         state.selectedProfile = state.profiles.length ? 0 : null;
       })
       .catch(function () { state.profiles = []; })
-      .then(function () {
-        state.loading = false;
-        render();
-      });
+      .then(function () { state.loading = false; render(); });
   }
 
   function renderProfiles() {
@@ -243,12 +273,13 @@
 
     var list = el('div', { cls: 'htp-profile-list' });
     state.profiles.forEach(function (p, i) {
+      var label = (p.is_admin ? '[admin] ' : '') + (p.url || '');
       list.append(el('div', {
         cls: 'htp-profile-item' + (state.selectedProfile === i ? ' htp-profile-item--active' : ''),
         on:  { click: function () { state.selectedProfile = i; render(); } }
       },
         el('span', { cls: speedCls(p.total_ms) }, fmtMs(p.total_ms)),
-        el('span', { cls: 'htp-profile-meta' }, (p.is_admin ? '[admin] ' : '') + (p.url || '')),
+        el('span', { cls: 'htp-profile-meta' }, label),
         el('span', { cls: 'htp-profile-date' }, p.date ? new Date(p.date).toLocaleTimeString() : '')
       ));
     });
@@ -260,79 +291,165 @@
     return section;
   }
 
+  // ----------------------------------------------------------- detail
   function renderDetail(p, index) {
-    var card = el('div', { cls: 'htp-card htp-mt' });
+    var card    = el('div', { cls: 'htp-card htp-mt' });
+    var adminData = p.admin || null;
 
-    var wooTiles = [];
-    if (p.woo) {
-      wooTiles.push(tile('WC queries', p.woo.wc_queries));
-      wooTiles.push(tile('WC query time', fmtMs(p.woo.wc_query_ms)));
+    // Screen badge
+    var screenBadge = null;
+    if (adminData && adminData.screen) {
+      var s = adminData.screen;
+      screenBadge = el('span', { cls: 'htp-badge htp-badge--screen' },
+        'screen: ' + s.id + (s.post_type ? ' / ' + s.post_type : ''));
     }
 
     card.append(
       el('div', { cls: 'htp-row' },
         el('h3', {}, fmtMs(p.total_ms) + ' — ' + (p.url || '')),
-        el('span', { cls: 'htp-hint' }, new Date(p.date).toLocaleString())
-      ),
-      el('div', { cls: 'htp-metrics-row' },
-        [tile('Memory', (p.memory_mb || 0) + 'MB'),
-         tile('DB queries', p.db ? p.db.total : '—'),
-         tile('DB time', fmtMs(p.db ? p.db.total_ms : null))]
-        .concat(wooTiles)
+        el('div', { cls: 'htp-row' },
+          screenBadge,
+          el('span', { cls: 'htp-hint' }, new Date(p.date).toLocaleString())
+        )
       )
     );
 
-    // Checkpoints
-    var checkpoints = p.checkpoints || {};
-    if (Object.keys(checkpoints).length) {
-      var t = el('table', { cls: 'htp-table' });
-      Object.entries(checkpoints).forEach(function (entry) {
-        t.append(el('tr', {}, el('td', {}, entry[0]), el('td', { cls: speedCls(entry[1]) }, fmtMs(entry[1]))));
-      });
-      card.append(el('h4', {}, 'Request timeline'), t);
+    // Pending update-check warning
+    if (adminData && adminData.pending_checks && adminData.pending_checks.length) {
+      card.append(el('div', { cls: 'htp-alert htp-alert--warn' },
+        '⚠️ Stale update-check transients detected for: ' +
+        adminData.pending_checks.join(', ') +
+        ' — WordPress will make blocking HTTP requests on the next admin load. ' +
+        'Fix: visit wp-admin/update-core.php or enable a background update plugin.'
+      ));
     }
 
-    // Plugin hook counts
+    // Metric tiles
+    var wooTiles = [];
+    if (p.woo) {
+      wooTiles.push(tile('WC queries', p.woo.wc_queries));
+      wooTiles.push(tile('WC time', fmtMs(p.woo.wc_query_ms)));
+      if (p.woo.hpos_enabled != null) {
+        wooTiles.push(tile('HPOS', p.woo.hpos_enabled ? 'enabled' : 'legacy'));
+      }
+    }
+    card.append(
+      el('div', { cls: 'htp-metrics-row' },
+        [tile('Memory', (p.memory_mb || 0) + 'MB'),
+         tile('DB queries', p.db ? p.db.total : '—'),
+         tile('DB time', fmtMs(p.db ? p.db.total_ms : null))].concat(wooTiles)
+      )
+    );
+
+    // Admin hook totals — most important section for admin pages
+    if (adminData && adminData.hook_totals && Object.keys(adminData.hook_totals).length) {
+      var maxAdminMs = Math.max.apply(null, Object.values(adminData.hook_totals));
+      var at = el('table', { cls: 'htp-table' });
+      Object.keys(adminData.hook_totals).forEach(function (hook) {
+        var ms = adminData.hook_totals[hook];
+        at.append(el('tr', {},
+          el('td', { cls: 'htp-slug' }, hook),
+          el('td', { style: 'width:35%' }, bar(ms / maxAdminMs * 100, ms > 300 ? 'htp-bar--warn' : '')),
+          el('td', { cls: 'htp-mono ' + speedCls(ms) }, fmtMs(ms))
+        ));
+      });
+      card.append(el('h4', {}, 'Admin hook totals'), at);
+    }
+
+    // Per-plugin attribution — THE key feature for diagnosing admin slowness
+    if (adminData && adminData.plugin_timings && Object.keys(adminData.plugin_timings).length) {
+      card.append(el('h4', {}, 'Per-plugin time in admin hooks'),
+        el('p', { cls: 'htp-hint' }, 'Shows which plugin is responsible for admin_init / admin_menu slowness.'));
+
+      Object.keys(adminData.plugin_timings).forEach(function (hook) {
+        var plugins = adminData.plugin_timings[hook];
+        var slugs   = Object.keys(plugins);
+        if (!slugs.length) return;
+        var maxMs = Math.max.apply(null, slugs.map(function (s) { return plugins[s]; }));
+
+        card.append(el('p', { cls: 'htp-hint htp-mt' }, hook + ':'));
+        var pt = el('table', { cls: 'htp-table' });
+        slugs.forEach(function (slug) {
+          var ms = plugins[slug];
+          pt.append(el('tr', {},
+            el('td', { cls: 'htp-slug' }, slug),
+            el('td', { style: 'width:40%' }, bar(ms / maxMs * 100, ms > 100 ? 'htp-bar--warn' : '')),
+            el('td', { cls: 'htp-mono ' + speedCls(ms) }, fmtMs(ms))
+          ));
+        });
+        card.append(pt);
+      });
+    }
+
+    // Enqueued assets per plugin
+    if (adminData && adminData.enqueued && Object.keys(adminData.enqueued).length) {
+      var maxAssets = Math.max.apply(null, Object.values(adminData.enqueued));
+      var et = el('table', { cls: 'htp-table' });
+      Object.keys(adminData.enqueued).forEach(function (slug) {
+        var count = adminData.enqueued[slug];
+        et.append(el('tr', {},
+          el('td', { cls: 'htp-slug' }, slug),
+          el('td', { style: 'width:40%' }, bar(count / maxAssets * 100, count > 10 ? 'htp-bar--warn' : '')),
+          el('td', { cls: 'htp-mono' }, count + ' assets')
+        ));
+      });
+      card.append(el('h4', {}, 'Enqueued assets per plugin'), et);
+    }
+
+    // Request timeline checkpoints
+    var checkpoints = p.checkpoints || {};
+    if (Object.keys(checkpoints).length) {
+      var ct = el('table', { cls: 'htp-table' });
+      Object.keys(checkpoints).forEach(function (k) {
+        var v = checkpoints[k];
+        ct.append(el('tr', {}, el('td', {}, k), el('td', { cls: speedCls(v) }, fmtMs(v))));
+      });
+      card.append(el('h4', {}, 'Request timeline'), ct);
+    }
+
+    // Plugin hook registration counts
     var pluginHooks = p.plugin_hooks || {};
     if (Object.keys(pluginHooks).length) {
-      var vals = Object.values(pluginHooks);
+      var vals   = Object.keys(pluginHooks).map(function (k) { return pluginHooks[k]; });
       var maxVal = vals.length ? Math.max.apply(null, vals) : 1;
-      var t2 = el('table', { cls: 'htp-table' });
-      Object.entries(pluginHooks).slice(0, 20).forEach(function (entry) {
-        var slug = entry[0], count = entry[1];
-        t2.append(el('tr', {},
+      var ht = el('table', { cls: 'htp-table' });
+      Object.keys(pluginHooks).slice(0, 20).forEach(function (slug) {
+        var count = pluginHooks[slug];
+        ht.append(el('tr', {},
           el('td', { cls: 'htp-slug' }, slug),
           el('td', { style: 'width:40%' }, bar(count / maxVal * 100, count > maxVal * 0.5 ? 'htp-bar--warn' : '')),
           el('td', { cls: 'htp-mono' }, count + ' hooks')
         ));
       });
-      card.append(el('h4', {}, 'Plugin hook registrations'), t2);
+      card.append(el('h4', {}, 'Plugin hook registrations'), ht);
     }
 
     // Slow queries
     if (p.db && p.db.slowest && p.db.slowest.length) {
-      var t3 = el('table', { cls: 'htp-table' });
-      t3.append(el('tr', {}, el('th', {}, 'Time'), el('th', {}, 'SQL'), el('th', {}, 'Caller')));
+      var qt = el('table', { cls: 'htp-table' });
+      qt.append(el('tr', {}, el('th', {}, 'Time'), el('th', {}, 'SQL'), el('th', {}, 'Caller')));
       p.db.slowest.forEach(function (q) {
-        t3.append(el('tr', {},
+        qt.append(el('tr', {},
           el('td', { cls: 'htp-mono htp-bad' }, fmtMs(q.ms)),
           el('td', { cls: 'htp-sql' }, q.sql || ''),
           el('td', { cls: 'htp-hint' }, q.caller || '')
         ));
       });
-      card.append(el('h4', {}, 'Slow queries (>' + (p.db.slow_threshold_ms || 3) + 'ms)'), t3);
+      card.append(el('h4', {}, 'Slow queries (>' + (p.db.slow_threshold_ms || 3) + 'ms)'), qt);
     }
 
     // WooCommerce hook timings
     if (p.woo && p.woo.hook_timings && Object.keys(p.woo.hook_timings).length) {
-      var t4 = el('table', { cls: 'htp-table' });
-      Object.entries(p.woo.hook_timings).forEach(function (entry) {
-        t4.append(el('tr', {}, el('td', {}, entry[0]), el('td', { cls: speedCls(entry[1]) }, fmtMs(entry[1]))));
+      var wt = el('table', { cls: 'htp-table' });
+      Object.keys(p.woo.hook_timings).forEach(function (hook) {
+        var ms = p.woo.hook_timings[hook];
+        wt.append(el('tr', {}, el('td', {}, hook), el('td', { cls: speedCls(ms) }, fmtMs(ms))));
       });
-      card.append(el('h4', {}, 'WooCommerce ' + (p.woo.wc_version || '')), t4);
+      card.append(el('h4', {}, 'WooCommerce ' + (p.woo.wc_version || '') +
+        (p.woo.hpos_enabled ? ' (HPOS)' : ' (legacy post meta)')), wt);
     }
 
-    // AI section
+    // AI
     card.append(el('div', { cls: 'htp-ai-section' },
       el('div', { cls: 'htp-row' },
         el('h4', {}, 'AI Recommendations'),
@@ -345,31 +462,19 @@
       ),
       p.ai_analysis
         ? el('div', { cls: 'htp-ai-result', innerHTML: renderMarkdown(p.ai_analysis) })
-        : el('p', { cls: 'htp-hint' }, 'Click the button to get AI-powered recommendations for this profile.')
+        : el('p', { cls: 'htp-hint' }, 'Click to get AI-powered recommendations for this profile.')
     ));
 
     return card;
-  }
-
-  function tile(label, value) {
-    return el('div', { cls: 'htp-metric' },
-      el('span', { cls: 'htp-metric-val' }, String(value != null ? value : '—')),
-      el('span', { cls: 'htp-metric-label' }, label)
-    );
   }
 
   function runAI(scanName, index) {
     state.aiLoading = true;
     render();
     post('htp_ai_analyze', { scan_name: scanName, index: index })
-      .then(function (data) {
-        state.profiles[index].ai_analysis = data.analysis;
-      })
+      .then(function (data) { state.profiles[index].ai_analysis = data.analysis; })
       .catch(function (e) { alert('AI analysis failed: ' + e.message); })
-      .then(function () {
-        state.aiLoading = false;
-        render();
-      });
+      .then(function () { state.aiLoading = false; render(); });
   }
 
   // ----------------------------------------------------------- settings
@@ -383,9 +488,10 @@
     );
     providerSel.value = s.ai_provider || 'anthropic';
 
-    var modelInput = el('input', { type: 'text', cls: 'htp-input', placeholder: 'Leave blank for default', value: s.ai_model || '' });
-    var keyInput   = el('input', { type: 'password', cls: 'htp-input', autocomplete: 'off',
-      placeholder: s.ai_api_key ? 'API key is set (enter new key to change)' : 'Enter API key' });
+    var modelInput = el('input', { type: 'text', cls: 'htp-input',
+      placeholder: 'Leave blank for default', value: s.ai_model || '' });
+    var keyInput = el('input', { type: 'password', cls: 'htp-input', autocomplete: 'off',
+      placeholder: s.ai_api_key ? 'API key is set (enter new to change)' : 'Enter API key' });
 
     card.append(
       el('h3', {}, 'AI Settings'),
@@ -397,7 +503,11 @@
         el('button', {
           cls: 'htp-btn htp-btn--primary',
           on:  { click: function () {
-            post('htp_save_settings', { ai_provider: providerSel.value, ai_model: modelInput.value, ai_api_key: keyInput.value })
+            post('htp_save_settings', {
+              ai_provider: providerSel.value,
+              ai_model:    modelInput.value,
+              ai_api_key:  keyInput.value
+            })
               .then(function () { alert('Settings saved.'); })
               .catch(function (e) { alert('Save failed: ' + e.message); });
           }}
@@ -410,9 +520,7 @@
 
   // ------------------------------------------------------------------ init
   loadScans().then(function () {
-    if (state.scans.length) {
-      return loadProfiles(state.scans[0]);
-    }
+    if (state.scans.length) return loadProfiles(state.scans[0]);
     render();
   });
 
